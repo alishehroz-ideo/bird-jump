@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en-us">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Bird Jump</title>
+  <link rel="shortcut icon" href="TemplateData/favicon.ico">
+  <link rel="stylesheet" href="TemplateData/style.css">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
+    #unity-container { position: fixed; inset: 0; }
+    #unity-canvas    { position: absolute; }
+    #unity-warning {
+      position: absolute; left: 50%; top: 5%;
+      transform: translate(-50%);
+      background: white; padding: 10px; display: none;
+    }
+
+    /* ── Unity loading bar (restored) — centered over the portrait letterbox ── */
+    #unity-loading-bar {
+      position: absolute; left: 50%; top: 50%;
+      transform: translate(-50%, -50%);
+      display: none; z-index: 2;
+    }
+    #unity-logo {
+      width: 154px; height: 130px; margin: 0 auto;
+      background: url('TemplateData/unity-logo-dark.png') no-repeat center;
+    }
+    #unity-progress-bar-empty {
+      width: 141px; height: 18px; margin: 10px auto 0;
+      background: url('TemplateData/progress-bar-empty-dark.png') no-repeat center;
+    }
+    #unity-progress-bar-full {
+      width: 0%; height: 18px;
+      background: url('TemplateData/progress-bar-full-dark.png') no-repeat center;
+    }
+  </style>
+</head>
+<body>
+  <div id="unity-container">
+    <canvas id="unity-canvas" tabindex="-1"></canvas>
+    <div id="unity-loading-bar">
+      <div id="unity-logo"></div>
+      <div id="unity-progress-bar-empty">
+        <div id="unity-progress-bar-full"></div>
+      </div>
+    </div>
+    <div id="unity-warning"></div>
+  </div>
+
+  <script>
+    // ── Responsive letterbox ─────────────────────────────────────────────────
+    var GAME_ASPECT = 720 / 1280;
+    var unityInstance = null;
+
+    function resizeCanvas() {
+      var canvas = document.getElementById('unity-canvas');
+      var availW = window.innerWidth;
+      var availH = window.innerHeight;
+      var w, h;
+      if (availW / availH > GAME_ASPECT) {
+        h = availH; w = Math.round(h * GAME_ASPECT);
+      } else {
+        w = availW; h = Math.round(w / GAME_ASPECT);
+      }
+      canvas.style.width  = w + 'px';
+      canvas.style.height = h + 'px';
+      canvas.style.left   = Math.round((availW - w) / 2) + 'px';
+      canvas.style.top    = Math.round((availH - h) / 2) + 'px';
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    // ── Warning banner ───────────────────────────────────────────────────────
+    function unityShowBanner(msg, type) {
+      var banner = document.getElementById('unity-warning');
+      var div = document.createElement('div');
+      div.innerHTML = msg;
+      if (type === 'error') div.style.cssText = 'background:red;padding:10px;';
+      else if (type === 'warning') {
+        div.style.cssText = 'background:yellow;padding:10px;';
+        setTimeout(function() {
+          banner.removeChild(div);
+          banner.style.display = banner.children.length ? 'block' : 'none';
+        }, 5000);
+      }
+      banner.appendChild(div);
+      banner.style.display = 'block';
+    }
+
+    // ── parent ↔ game bridge ─────────────────────────────────────────────────
+    window.addEventListener('message', function(event) {
+      var msg = event.data;
+      if (!msg || msg.type !== 'campaign:init') return;
+      var cfg = msg.config || {};
+      if (!unityInstance) return;
+      if (cfg.birdImage) unityInstance.SendMessage('Bridge', 'SetBirdImage', cfg.birdImage);
+      if (cfg.birdText  !== undefined) unityInstance.SendMessage('Bridge', 'SetBirdText',  String(cfg.birdText));
+    });
+  </script>
+
+  <script>
+    var buildUrl  = "Build";
+    var loaderUrl = buildUrl + "/build.loader.js";
+    var config = {
+      dataUrl:            buildUrl + "/build.data",
+      frameworkUrl:       buildUrl + "/build.framework.js",
+      codeUrl:            buildUrl + "/build.wasm",
+      streamingAssetsUrl: "StreamingAssets",
+      companyName:        "ASN Games",
+      productName:        "Bird Jump",
+      productVersion:     "1.0",
+      matchWebGLToCanvasSize: true,
+      showBanner: unityShowBanner,
+    };
+
+    // ── Loading bar: show while the build downloads/initializes ──────────────
+    var loadingBar      = document.querySelector('#unity-loading-bar');
+    var progressBarFull = document.querySelector('#unity-progress-bar-full');
+    loadingBar.style.display = 'block';
+
+    var script = document.createElement('script');
+    script.src = loaderUrl;
+    script.onload = function() {
+      createUnityInstance(document.querySelector('#unity-canvas'), config, function(progress) {
+        progressBarFull.style.width = (100 * progress) + '%';
+      }).then(function(instance) {
+        unityInstance = instance;
+        loadingBar.style.display = 'none';
+        resizeCanvas();
+
+        // Tell parent the game is ready
+        window.parent.postMessage({ type: 'game:ready' }, '*');
+
+        // ── Self-tests (no CORS, no external files) ────────────────────────
+        var params = new URLSearchParams(window.location.search);
+
+        // ?birdTest=1  → pink circle sent as bird image
+        if (params.get('birdTest') === '1') {
+          var size = 256;
+          var c = document.createElement('canvas');
+          c.width = c.height = size;
+          var ctx = c.getContext('2d');
+          ctx.clearRect(0, 0, size, size);
+          ctx.beginPath();
+          ctx.arc(size/2, size/2, size/2 - 4, 0, Math.PI * 2);
+          ctx.fillStyle = '#FF2D78';
+          ctx.fill();
+          ctx.strokeStyle = '#FFFFFF';
+          ctx.lineWidth = 8;
+          ctx.stroke();
+          unityInstance.SendMessage('Bridge', 'SetBirdImage', c.toDataURL('image/png'));
+        }
+
+        // ?textTest=XXXX  → send that value as bird text (max 5 chars enforced in C#)
+        var textParam = params.get('textTest');
+        if (textParam !== null) {
+          unityInstance.SendMessage('Bridge', 'SetBirdText', textParam);
+        }
+
+      }).catch(function(message) {
+        alert(message);
+      });
+    };
+    document.body.appendChild(script);
+  </script>
+</body>
+</html>
