@@ -37,9 +37,29 @@
         display: none; z-index: 10; text-align: center;
       }
       #unity-logo {
+        position: relative;
         width: 180px; height: 180px; margin: 0 auto 12px;
+        background: none;   /* static icon painted only on fallback (JS adds .gb-fallback) */
+      }
+      #unity-logo.gb-fallback {
         background: url('TemplateData/game-icon.jpg') center / contain no-repeat;
       }
+      /* Per-game tenant icon from GameBull /context, layered over #unity-logo; revealed only after decode. */
+      #gb-tenant-logo {
+        position: absolute; inset: 0;
+        background-position: center; background-repeat: no-repeat; background-size: contain;
+        opacity: 0; transition: opacity .25s ease;
+      }
+      #gb-tenant-logo.gb-ready { opacity: 1; }
+      /* Spinner centred in the 180px icon box while /context is in flight. */
+      #gb-spinner {
+        position: absolute; left: 50%; top: 50%;
+        width: 44px; height: 44px; margin: -22px 0 0 -22px;
+        border: 4px solid rgba(255,255,255,0.18); border-top-color: #7FA8D4;
+        border-radius: 50%; animation: gb-spin 0.8s linear infinite;
+      }
+      @keyframes gb-spin { to { transform: rotate(360deg); } }
+      @media (prefers-reduced-motion: reduce) { #gb-spinner { animation-duration: 3s; } }
       #unity-progress-bar-empty {                 /* track */
         width: 300px; height: 18px; margin: 12px auto 0;
         background: #d9d9d9 !important; background-image: none !important;
@@ -67,13 +87,77 @@
     <div id="unity-container">
       <canvas id="unity-canvas" width=1080 height=1920 tabindex="-1"></canvas>
       <div id="unity-loading-bar">
-        <div id="unity-logo"></div>
+        <div id="unity-logo">
+          <div id="gb-tenant-logo"></div>
+          <div id="gb-spinner"></div>
+        </div>
         <div id="unity-progress-bar-empty"><div id="unity-progress-bar-full"></div></div>
         <div id="unity-progress-percent">0%</div>
       </div>
       <div id="unity-warning"> </div>
     </div>
     <script>
+      // ===== Tenant loading icon (GameBull /context) — reads customization.gameLogoUrl BEFORE Unity
+      //        boots so the loading screen shows THIS game's own icon. Fire-and-forget: nothing awaits
+      //        it, the Unity download is never delayed, and every failure falls back to the static
+      //        TemplateData/game-icon.jpg. PER-GAME field only (gameLogoUrl -> gameBannerUrl); never
+      //        logoUrl/tenantLogoUrl/assets/__logo__ (tenant-wide, wrong game's logo on shared tenants).
+      (function loadTenantIcon() {
+        var DEFAULT_API_BASE = "https://api.g-b.store";           // production; launch URL can override via ?apiBase=
+        var DEFAULT_GAME_ID  = "BIRD_JUMP";                       // fallback only; ?gameId= from URL wins
+        var FETCH_TIMEOUT_MS = 4000;
+
+        var spinner = document.querySelector("#gb-spinner");
+        var target  = document.querySelector("#gb-tenant-logo");
+        var iconBox = document.querySelector("#unity-logo");
+
+        function fallback() { if (iconBox) iconBox.classList.add("gb-fallback"); stopSpinner(); }
+        function stopSpinner() { if (spinner && spinner.parentNode) spinner.parentNode.removeChild(spinner); }
+
+        try {
+          var q = new URLSearchParams(window.location.search);
+          var token      = q.get("sessionToken") || q.get("bootToken") || q.get("token");   // same precedence as GameBullBoot
+          var tenantSlug = q.get("tenantSlug");
+          var apiBase    = (q.get("apiBase") || DEFAULT_API_BASE).replace(/\/+$/, "");
+          var gameId     = q.get("gameId") || DEFAULT_GAME_ID;
+
+          if (!tenantSlug || !token) { fallback(); return; }   // no credentials -> static icon, not an error
+
+          var ctrl  = ("AbortController" in window) ? new AbortController() : null;
+          var timer = setTimeout(function () { if (ctrl) ctrl.abort(); }, FETCH_TIMEOUT_MS);
+
+          var url = apiBase + "/play/games/" + encodeURIComponent(gameId) +
+                    "/context?tenantSlug=" + encodeURIComponent(tenantSlug);
+
+          fetch(url, {
+            method: "GET",
+            headers: { "Authorization": "Bearer " + token },
+            signal: ctrl ? ctrl.signal : undefined
+          })
+            .then(function (r) { return r.ok ? r.json() : null; })   // 401/404 -> null -> fallback
+            .then(function (data) {
+              clearTimeout(timer);
+              var c = data && data.customization;
+              var iconUrl =
+                (c && typeof c.gameLogoUrl   === "string" && c.gameLogoUrl)   ? c.gameLogoUrl   :
+                (c && typeof c.gameBannerUrl === "string" && c.gameBannerUrl) ? c.gameBannerUrl : null;
+
+              if (!iconUrl || !target) { fallback(); return; }
+
+              var img = new Image();               // preload; only reveal once decoded so nothing flashes
+              img.crossOrigin = "anonymous";
+              img.onload = function () {
+                target.style.backgroundImage = 'url("' + iconUrl.replace(/"/g, '%22') + '")';
+                target.classList.add("gb-ready");
+                stopSpinner();
+              };
+              img.onerror = fallback;
+              img.src = iconUrl;
+            })
+            .catch(function () { clearTimeout(timer); fallback(); });   // network / abort / CORS / timeout
+        } catch (e) { fallback(); }
+      })();
+
       var canvas = document.querySelector("#unity-canvas");
 
       // ===== Responsive letterbox: largest rect of the game's aspect that fits, centered =====
@@ -154,6 +238,8 @@
             el.style.backgroundImage = "none";   // kill any background image (the icon)
             if (el.parentNode) el.parentNode.removeChild(el);
           }
+          killEl("#gb-spinner");       // dynamic-icon additions must be torn down too,
+          killEl("#gb-tenant-logo");   // or Safari keeps painting them over the running game
           killEl("#unity-logo");
           killEl("#unity-progress-bar-full");
           killEl("#unity-progress-bar-empty");
