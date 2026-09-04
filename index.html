@@ -17,11 +17,17 @@
         overflow: hidden; background: #0e0e12;
       }
 
-      /* Full-viewport shell. Solid dark = clean loading backdrop + clean letterbox bars.
-         (No hero image: square game art looks oversized stretched into the side bars.) */
+      /* Full-viewport shell. The game's own key art, blurred and darkened, sits behind the
+         loading icon and bar so a player can see WHICH game is loading.
+           - `cover`, never `100% 100%`: cover crops, stretch distorts, and portrait art pulled
+             into a wide letterboxed viewport looks broken (which is why an earlier pass here
+             gave up and used a flat colour).
+           - #0e0e12 stays underneath as the fallback if the JPG is slow, and is what paints the
+             letterbox bars. It MUST match GROUND in Tools/bake_loading_bg.py.
+         Regenerate the JPG with: python Tools/bake_action_bg.py && python Tools/bake_loading_bg.py */
       #unity-container {
         position: fixed; inset: 0;
-        background: #0e0e12;
+        background: #0e0e12 url('TemplateData/loading-bg.jpg') center / cover no-repeat;
       }
 
       /* Canvas is positioned by JS (letterbox). Must be TRANSPARENT so the backdrop shows
