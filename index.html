@@ -24,7 +24,13 @@
              gave up and used a flat colour).
            - #0e0e12 stays underneath as the fallback if the JPG is slow, and is what paints the
              letterbox bars. It MUST match GROUND in Tools/bake_loading_bg.py.
-         Regenerate the JPG with: python Tools/bake_action_bg.py && python Tools/bake_loading_bg.py */
+         Regenerate the JPG with: python Tools/bake_action_bg.py && python Tools/bake_loading_bg.py
+
+         THIS IS HALF THE CHANGE. The image is taken back OFF in the createUnityInstance().then()
+         handler below (search "BP-1") the instant Unity renders, because this background also
+         paints the letterbox bars. Setting the url here without that teardown leaves blurred art
+         banding the game for the entire session. The two halves are ~200 lines and one language
+         apart, which is exactly how they got separated the first time. */
       #unity-container {
         position: fixed; inset: 0;
         background: #0e0e12 url('TemplateData/loading-bg.jpg') center / cover no-repeat;
@@ -252,6 +258,17 @@
           killEl("#unity-progress-percent");
           killEl("#unity-loading-bar");
           // No custom loading overlay/cover div in this template — nothing else to kill.
+
+          // BP-1: the backdrop is a LOADING backdrop, so it comes down with the rest of the
+          // loading UI. #unity-container is the FULL VIEWPORT and the canvas is letterboxed
+          // inside it, so that background is also what paints the LETTERBOX BARS — leaving the
+          // image set keeps a band of blurred key art above and below the game for the whole
+          // session, with a visible seam at the canvas edge. killEl() above tears down the
+          // spinner, the logo and the progress bar; nothing else clears the container.
+          // Drop back to the flat ground colour, which must match GROUND in
+          // Tools/bake_loading_bg.py and the fallback in the #unity-container rule above.
+          var container = document.querySelector("#unity-container");
+          if (container) container.style.background = "#0e0e12";
 
           resizeCanvas();
 
